@@ -63,7 +63,7 @@ jobs:
     with:
       service-name: marketplace-service
       service-path: .
-      #fail-on-critical: "1"
+      fail-on-critical: "1"
 
   # ═══════════════════════════════════════════════════════════
   # 3. PR QUALITY GATE
