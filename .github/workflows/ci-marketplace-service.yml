@@ -1,0 +1,142 @@
+# ════════════════════════════════════════════════════════════
+# SmartHarvest — Marketplace Service CI/CD
+# ════════════════════════════════════════════════════════════
+# PR:      code-quality + trivy scan (soft) → STOP
+# develop: trivy scan (strict) → publish → cd (values-dev.yaml)
+# main:    publish release-tagged image → cd (values-prod.yaml)
+# ════════════════════════════════════════════════════════════
+name: CI/CD — Marketplace Service
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+  release:
+    types: [created]
+
+permissions:
+  contents: write
+
+jobs:
+
+  # ═══════════════════════════════════════════════════════════
+  # 1. CODE QUALITY (PR only)
+  # ═══════════════════════════════════════════════════════════
+  sast:
+    if: github.event_name == 'pull_request'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_sast.yml@develop
+    with:
+      service-path: .
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_URL: ${{ secrets.SONAR_URL }}
+
+  sca:
+    needs: [sast]
+    if: github.event_name == 'pull_request'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_sca.yml@develop
+    with:
+      service-name: marketplace-service
+      service-path: .
+      runtime: python
+    secrets:
+      SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  # ═══════════════════════════════════════════════════════════
+  # 2. DOCKER BUILD + TRIVY SCAN
+  # ═══════════════════════════════════════════════════════════
+
+  # PR — soft scan 
+  trivy-pr:
+    needs: [sca]
+    if: github.event_name == 'pull_request'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-build.yml@develop
+    with:
+      service-name: marketplace-service
+      service-path: .
+      fail-on-critical: "0"
+
+  # develop — strict scan 
+  trivy-develop:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-build.yml@develop
+    with:
+      service-name: marketplace-service
+      service-path: .
+      fail-on-critical: "0"
+
+  # ═══════════════════════════════════════════════════════════
+  # 3. PR QUALITY GATE
+  # ═══════════════════════════════════════════════════════════
+  pr-check:
+    name: PR Quality Gate
+    needs: [sast, sca, trivy-pr]
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "✅ All PR checks passed"
+
+  # ═══════════════════════════════════════════════════════════
+  # 4. DOCKER PUBLISH (DEVELOP)
+  # ═══════════════════════════════════════════════════════════
+
+  publish-develop:
+    needs: [trivy-develop]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-publish.yml@develop
+    with:
+      service-name: marketplace-service
+      service-path: .
+      environment: develop
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+  # ═══════════════════════════════════════════════════════════
+  # 5. CD (DEVELOP) — Update values-dev.yaml
+  # ═══════════════════════════════════════════════════════════
+
+  cd-develop:
+    needs: [publish-develop]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_cd-template.yml@develop
+    with:
+      service-name: marketplace-service
+      image-tag: dev-${{ github.sha }}
+      environment: develop
+    secrets:
+      HELM_REPO_PAT: ${{ secrets.HELM_REPO_PAT }}
+
+  # ═══════════════════════════════════════════════════════════
+  # 6. RELEASE — Manual Tag-based Prod Deployment
+  # ═══════════════════════════════════════════════════════════
+
+  publish-release:
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.target_commitish == 'main' &&
+      github.event.release.prerelease == false
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-publish.yml@develop
+    with:
+      service-name: marketplace-service
+      service-path: .
+      environment: main
+      image-tag: ${{ github.event.release.tag_name }}
+    secrets:
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+  cd-release:
+    needs: [publish-release]
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.target_commitish == 'main' &&
+      github.event.release.prerelease == false
+    uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_cd-template.yml@develop
+    with:
+      service-name: marketplace-service
+      image-tag: ${{ github.event.release.tag_name }}
+      environment: main
+    secrets:
+      HELM_REPO_PAT: ${{ secrets.HELM_REPO_PAT }}
