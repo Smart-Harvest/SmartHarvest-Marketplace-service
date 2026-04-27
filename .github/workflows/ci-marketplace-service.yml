@@ -47,7 +47,7 @@ jobs:
   # 2. DOCKER BUILD + TRIVY SCAN
   # ═══════════════════════════════════════════════════════════
 
-  # PR — soft scan (fail-on-critical=0)
+  # PR — soft scan 
   trivy-pr:
     needs: [sca]
     if: github.event_name == 'pull_request'
@@ -57,7 +57,7 @@ jobs:
       service-path: .
       fail-on-critical: "0"
 
-  # develop — strict scan (fail-on-critical=1)
+  # develop — strict scan 
   trivy-develop:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-build.yml@develop
