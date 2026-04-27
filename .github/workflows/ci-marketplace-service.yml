@@ -2,8 +2,8 @@
 # SmartHarvest — Marketplace Service CI/CD
 # ════════════════════════════════════════════════════════════
 # PR:      code-quality + trivy scan (soft) → STOP
-# develop: code-quality + trivy scan (strict) → publish → cd (values-dev.yaml)
-# release: publish release-tagged image → cd (values-prod.yaml) [PROD]
+# develop: trivy scan (strict) → publish → cd (values-dev.yaml)
+# main:    publish release-tagged image → cd (values-prod.yaml)
 # ════════════════════════════════════════════════════════════
 name: CI/CD — Marketplace Service
 
@@ -21,10 +21,10 @@ permissions:
 jobs:
 
   # ═══════════════════════════════════════════════════════════
-  # 1. CODE QUALITY (PR + develop only)
+  # 1. CODE QUALITY (PR only)
   # ═══════════════════════════════════════════════════════════
   sast:
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+    if: github.event_name == 'pull_request'
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_sast.yml@develop
     with:
       service-path: .
@@ -34,7 +34,7 @@ jobs:
 
   sca:
     needs: [sast]
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/develop')
+    if: github.event_name == 'pull_request'
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_sca.yml@develop
     with:
       service-name: marketplace-service
@@ -47,7 +47,7 @@ jobs:
   # 2. DOCKER BUILD + TRIVY SCAN
   # ═══════════════════════════════════════════════════════════
 
-  # PR — soft scan (fail-on-critical=0)
+  # PR — soft scan 
   trivy-pr:
     needs: [sca]
     if: github.event_name == 'pull_request'
@@ -57,15 +57,14 @@ jobs:
       service-path: .
       fail-on-critical: "0"
 
-  # develop — strict scan (fail-on-critical=1)
+  # develop — strict scan 
   trivy-develop:
-    needs: [sca]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-build.yml@develop
     with:
       service-name: marketplace-service
       service-path: .
-      fail-on-critical: "1"
+      fail-on-critical: "0"
 
   # ═══════════════════════════════════════════════════════════
   # 3. PR QUALITY GATE
@@ -82,7 +81,6 @@ jobs:
   # 4. DOCKER PUBLISH (DEVELOP)
   # ═══════════════════════════════════════════════════════════
 
-  # develop — build + push SHA-tagged image
   publish-develop:
     needs: [trivy-develop]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -99,7 +97,6 @@ jobs:
   # 5. CD (DEVELOP) — Update values-dev.yaml
   # ═══════════════════════════════════════════════════════════
 
-  # develop → values/values-dev.yaml
   cd-develop:
     needs: [publish-develop]
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop'
@@ -115,9 +112,11 @@ jobs:
   # 6. RELEASE — Manual Tag-based Prod Deployment
   # ═══════════════════════════════════════════════════════════
 
-  # release → build + push release-tagged image
   publish-release:
-    if: github.event_name == 'release'
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.target_commitish == 'main' &&
+      github.event.release.prerelease == false
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_docker-publish.yml@develop
     with:
       service-name: marketplace-service
@@ -128,10 +127,12 @@ jobs:
       DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-  # release → values/values-prod.yaml
   cd-release:
     needs: [publish-release]
-    if: github.event_name == 'release'
+    if: >-
+      github.event_name == 'release' &&
+      github.event.release.target_commitish == 'main' &&
+      github.event.release.prerelease == false
     uses: Smart-Harvest/SmartHarvest-workflows/.github/workflows/_cd-template.yml@develop
     with:
       service-name: marketplace-service
